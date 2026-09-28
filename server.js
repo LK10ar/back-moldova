@@ -32,7 +32,9 @@ const base = {
   title: i18n, summary: i18n,
   status: { type: String, enum: ['draft', 'published'], default: 'draft' },
   cover: url, gallery: [url],
-  videos: [url], links: [{ label: String, url }]
+  videos: [url], links: [{ label: String, url }],
+  sub: String, w: String, reg: String, st: String, seeded: Boolean, when: i18n,
+  location: { lat: Number, lng: Number }
 };
 const make = (name, extra = {}) =>
   mongoose.model(name, new Schema({ ...base, ...extra }, { timestamps: true }));
@@ -45,16 +47,16 @@ const Circuit = make('Circuit', {
   itinerary: [{ day: Number, title: i18n, text: i18n }], priceFrom: Number
 });
 const Activity = make('Activity', {
-  category: { type: String, enum: ['vin', 'nature', 'urbain', 'artisanat'] },
+  category: String,
   wilaya: String /* district ; mettre 'transnistrie' pour la section Transnistrie */, location: { lat: Number, lng: Number },
   route: { start: { name: String, lat: Number, lng: Number }, end: { name: String, lat: Number, lng: Number } }
 });
 const Restaurant = make('Restaurant', {
-  type: { type: String, enum: ['gastronomique', 'street-food', 'traditionnel'] },
+  type: String,
   address: String, wilaya: String /* district ; mettre 'transnistrie' pour la section Transnistrie */, location: { lat: Number, lng: Number }
 });
 const Heritage = make('Heritage', {
-  kind: { type: String, enum: ['monastere', 'forteresse', 'musee', 'site'] }, period: String, wilaya: String /* district ; mettre 'transnistrie' pour la section Transnistrie */,
+  kind: String, period: String, wilaya: String /* district ; mettre 'transnistrie' pour la section Transnistrie */,
   location: { lat: Number, lng: Number }
 });
 const News = make('News', { body: i18n, publishedAt: { type: Date, default: Date.now }, tags: [String] });
@@ -107,6 +109,20 @@ admin.post('/candidates/:id/approve', async (q, r) => {
   c.state = 'approved'; await c.save(); r.sendStatus(200);
 });
 admin.post('/candidates/:id/reject', async (q, r) => { await Candidate.findByIdAndUpdate(q.params.id, { state: 'rejected' }); r.sendStatus(200); });
+/* Import des fiches qui étaient codées en dur dans index.html (sans écraser ce qui existe déjà) */
+admin.post('/seed', async (q, r) => {
+  try {
+    const data = require('./seed-data.json');
+    let added = 0;
+    for (const [col, docs] of Object.entries(data)) {
+      for (const d of [...docs].reverse()) {           // ordre inversé : l'affichage trie par date décroissante
+        if (await models[col].exists({ slug: d.slug })) continue;
+        await models[col].create({ ...d, status: 'published', seeded: true }); added++;
+      }
+    }
+    r.json({ added });
+  } catch (e) { r.status(500).json({ error: e.message }); }
+});
 admin.param('c', (q, r, next, c) => models[c] ? next() : r.sendStatus(404));
 admin.get('/:c', async (q, r) => r.json(await models[q.params.c].find().sort('-updatedAt').limit(200)));
 admin.post('/:c', async (q, r) => {
