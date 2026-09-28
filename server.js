@@ -11,7 +11,10 @@ const { Schema } = mongoose;
 const app = express();
 app.set('trust proxy', 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
-app.use(cors({ origin: (process.env.FRONT_URL || '').split(',').filter(Boolean) }));
+// FRONT_URL peut contenir un chemin (https://lk10ar.github.io/moldova/) : on ne garde que l'origine (schéma + domaine)
+const origins = (process.env.FRONT_URL || 'https://lk10ar.github.io').split(',')
+  .map(s => { try { return new URL(s.trim()).origin; } catch { return ''; } }).filter(Boolean);
+app.use(cors({ origin: origins, methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'], maxAge: 86400 }));
 app.use(express.json({ limit: '200kb' }));
 app.get('/', (q, r) => r.send('Moldova Explorer API OK'));
 
@@ -22,7 +25,8 @@ const base = {
   slug: { type: String, unique: true, index: true, required: true },
   title: i18n, summary: i18n,
   status: { type: String, enum: ['draft', 'published'], default: 'draft' },
-  cover: url, gallery: [url]
+  cover: url, gallery: [url],
+  videos: [url], links: [{ label: String, url }]
 };
 const make = (name, extra = {}) =>
   mongoose.model(name, new Schema({ ...base, ...extra }, { timestamps: true }));
@@ -36,7 +40,8 @@ const Circuit = make('Circuit', {
 });
 const Activity = make('Activity', {
   category: { type: String, enum: ['vin', 'nature', 'urbain', 'artisanat'] },
-  wilaya: String /* district ; mettre 'transnistrie' pour la section Transnistrie */, location: { lat: Number, lng: Number }
+  wilaya: String /* district ; mettre 'transnistrie' pour la section Transnistrie */, location: { lat: Number, lng: Number },
+  route: { start: { name: String, lat: Number, lng: Number }, end: { name: String, lat: Number, lng: Number } }
 });
 const Restaurant = make('Restaurant', {
   type: { type: String, enum: ['gastronomique', 'street-food', 'traditionnel'] },
@@ -161,11 +166,13 @@ app.post('/internal/enrich', async (q, r) => {
 
 /* ---------- Démarrage ---------- */
 (async () => {
-  await mongoose.connect(process.env.MONGO_URI);
-  const { ADMIN_EMAIL, ADMIN_PASSWORD } = process.env;
-  if (ADMIN_EMAIL && ADMIN_PASSWORD && !(await AdminUser.exists({}))) {
-    await AdminUser.create({ email: ADMIN_EMAIL.toLowerCase(), passwordHash: await bcrypt.hash(ADMIN_PASSWORD, 12), role: 'admin' });
-    console.log('Admin créé :', ADMIN_EMAIL);
-  }
-  app.listen(process.env.PORT || 3000, () => console.log('Moldova Explorer en ligne'));
+  app.listen(process.env.PORT || 3000, () => console.log('Moldova Explorer en ligne, origines CORS :', origins.join(', ')));
+  try {
+    await mongoose.connect(process.env.MONGO_URI);
+    const { ADMIN_EMAIL, ADMIN_PASSWORD } = process.env;
+    if (ADMIN_EMAIL && ADMIN_PASSWORD && !(await AdminUser.exists({}))) {
+      await AdminUser.create({ email: ADMIN_EMAIL.toLowerCase(), passwordHash: await bcrypt.hash(ADMIN_PASSWORD, 12), role: 'admin' });
+      console.log('Admin créé :', ADMIN_EMAIL);
+    }
+  } catch (e) { console.error('MongoDB :', e.message); }
 })();
