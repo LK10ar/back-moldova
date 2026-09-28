@@ -12,9 +12,15 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
 // FRONT_URL peut contenir un chemin (https://lk10ar.github.io/moldova/) : on ne garde que l'origine (schéma + domaine)
-const origins = (process.env.FRONT_URL || 'https://lk10ar.github.io').split(',')
-  .map(s => { try { return new URL(s.trim()).origin; } catch { return ''; } }).filter(Boolean);
-app.use(cors({ origin: origins, methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'], maxAge: 86400 }));
+// FRONT_URL peut contenir plusieurs adresses séparées par des virgules, avec ou sans https:// ou chemin.
+const origins = [...new Set(['https://lk10ar.github.io', ...(process.env.FRONT_URL || '').split(',')]
+  .map(s => s.trim()).filter(Boolean)
+  .map(s => { try { return new URL(/^https?:\/\//.test(s) ? s : 'https://' + s).origin; } catch { return ''; } })
+  .filter(Boolean))];
+app.use(cors({
+  origin: (o, cb) => cb(null, !o || origins.includes(o)),
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], allowedHeaders: ['Content-Type', 'Authorization'], maxAge: 86400
+}));
 app.use(express.json({ limit: '200kb' }));
 app.get('/', (q, r) => r.send('Moldova Explorer API OK'));
 
