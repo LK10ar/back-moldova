@@ -75,8 +75,29 @@ const AdminUser = mongoose.model('AdminUser', new Schema({
 
 const models = { circuits: Circuit, activities: Activity, restaurants: Restaurant, heritage: Heritage, news: News };
 
+/* ---------- Réglages de la page d'accueil (cartes « Par où commencer », galerie « Un pays en images », vidéo) ---------- */
+const Setting = mongoose.model('Setting', new Schema({ key: { type: String, unique: true }, value: Schema.Types.Mixed }, { timestamps: true, minimize: false }));
+const LANGS = ['fr', 'en', 'es', 'ro', 'ru'];
+const isUrl = v => typeof v === 'string' && /^https?:\/\//i.test(v.trim());
+const i18nClean = (o, max) => { const r = {}; if (o && typeof o === 'object') for (const l of LANGS) if (typeof o[l] === 'string' && o[l].trim()) r[l] = o[l].trim().slice(0, max); return r; };
+function cleanHome(b = {}) {
+  const gallery = (Array.isArray(b.gallery) ? b.gallery : []).slice(0, 80)
+    .filter(g => g && isUrl(g.url))
+    .map(g => ({ url: g.url.trim(), caption: i18nClean(g.caption, 160), link: typeof g.link === 'string' ? g.link.trim().slice(0, 300) : '' }));
+  const cards = {};
+  for (const k of ['c', 'g', 'h', 't']) {
+    const c = b.cards && b.cards[k]; if (!c || typeof c !== 'object') continue;
+    const o = { title: i18nClean(c.title, 120), text: i18nClean(c.text, 400) };
+    if (isUrl(c.image)) o.image = c.image.trim();
+    if (Object.keys(o.title).length || Object.keys(o.text).length || o.image) cards[k] = o;
+  }
+  return { gallery, cards, heroVideo: isUrl(b.heroVideo) ? b.heroVideo.trim() : '' };
+}
+const getHome = async () => { const d = await Setting.findOne({ key: 'home' }).lean(); return cleanHome((d && d.value) || {}); };
+
 /* ---------- API publique ---------- */
 const pub = express.Router();
+pub.get('/settings/home', async (req, res) => { try { res.set('Cache-Control', 'public, max-age=30'); res.json(await getHome()); } catch (e) { res.status(500).json({ error: e.message }); } });
 pub.get('/:c', async (req, res) => {
   const M = models[req.params.c];
   if (!M) return res.sendStatus(404);
@@ -122,6 +143,14 @@ admin.post('/seed', async (q, r) => {
     }
     r.json({ added });
   } catch (e) { r.status(500).json({ error: e.message }); }
+});
+admin.get('/settings/home', async (q, r) => { try { r.json(await getHome()); } catch (e) { r.status(500).json({ error: e.message }); } });
+admin.put('/settings/home', async (q, r) => {
+  try {
+    const value = cleanHome(q.body);
+    await Setting.findOneAndUpdate({ key: 'home' }, { key: 'home', value }, { upsert: true, new: true });
+    r.json(value);
+  } catch (e) { r.status(400).json({ error: e.message }); }
 });
 admin.param('c', (q, r, next, c) => models[c] ? next() : r.sendStatus(404));
 admin.get('/:c', async (q, r) => r.json(await models[q.params.c].find().sort('-updatedAt').limit(200)));
