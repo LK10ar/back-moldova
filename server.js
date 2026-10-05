@@ -75,23 +75,55 @@ const AdminUser = mongoose.model('AdminUser', new Schema({
 
 const models = { circuits: Circuit, activities: Activity, restaurants: Restaurant, heritage: Heritage, news: News };
 
-/* ---------- Réglages de la page d'accueil (cartes « Par où commencer », galerie « Un pays en images », vidéo) ---------- */
+/* ---------- Réglages de la page d'accueil, gérés depuis l'admin ----------
+   galerie « Un pays en images », cartes « Par où commencer », vidéo / photo du header,
+   thème (couleurs + polices), ordre et visibilité des sections, textes modifiables. */
 const Setting = mongoose.model('Setting', new Schema({ key: { type: String, unique: true }, value: Schema.Types.Mixed }, { timestamps: true, minimize: false }));
 const LANGS = ['fr', 'en', 'es', 'ro', 'ru'];
+const HEX = /^#[0-9a-f]{6}$/i;
+const FONT_H = ['Playfair Display', 'Cormorant Garamond', 'DM Serif Display', 'Fraunces', 'Lora', 'Montserrat', 'Poppins', 'Space Grotesk', 'Syne', 'Bebas Neue', 'Unbounded'];
+const FONT_B = ['Georgia', 'Inter', 'DM Sans', 'Manrope', 'Nunito', 'Lora', 'Poppins', 'Montserrat', 'system-ui'];
+const SECTIONS = ['intro', 'stack', 'gallery', 'globe', 'catalogue'];
+const CARDS = ['c', 'g', 'h', 't'];
+const TEXT_KEYS = ['h1', 'sub', 'eye', 'c1', 'c2', 'st', 'kStack', 'tStack', 'kGal', 'tGal', 'kEarth', 'tEarth', 'dEarth', 'kCat', 'tCat', 'fH'];
 const isUrl = v => typeof v === 'string' && /^https?:\/\//i.test(v.trim());
+const uniq = a => [...new Set(a)];
 const i18nClean = (o, max) => { const r = {}; if (o && typeof o === 'object') for (const l of LANGS) if (typeof o[l] === 'string' && o[l].trim()) r[l] = o[l].trim().slice(0, max); return r; };
 function cleanHome(b = {}) {
   const gallery = (Array.isArray(b.gallery) ? b.gallery : []).slice(0, 80)
     .filter(g => g && isUrl(g.url))
     .map(g => ({ url: g.url.trim(), caption: i18nClean(g.caption, 160), link: typeof g.link === 'string' ? g.link.trim().slice(0, 300) : '' }));
   const cards = {};
-  for (const k of ['c', 'g', 'h', 't']) {
+  for (const k of CARDS) {
     const c = b.cards && b.cards[k]; if (!c || typeof c !== 'object') continue;
     const o = { title: i18nClean(c.title, 120), text: i18nClean(c.text, 400) };
     if (isUrl(c.image)) o.image = c.image.trim();
-    if (Object.keys(o.title).length || Object.keys(o.text).length || o.image) cards[k] = o;
+    if (c.off === true) o.off = true;
+    if (Object.keys(o.title).length || Object.keys(o.text).length || o.image || o.off) cards[k] = o;
   }
-  return { gallery, cards, heroVideo: isUrl(b.heroVideo) ? b.heroVideo.trim() : '' };
+  // apparence : couleurs (p1, ac, bg, cat, ft), polices (ff, fb), mode
+  const t = b.theme && typeof b.theme === 'object' ? b.theme : {}, theme = {};
+  for (const k of ['p1', 'ac', 'bg', 'cat', 'ft']) if (HEX.test(t[k] || '')) theme[k] = t[k].toLowerCase();
+  if (FONT_H.includes(t.ff)) theme.ff = t.ff;
+  if (FONT_B.includes(t.fb)) theme.fb = t.fb;
+  if (['dark', 'light', 'auto'].includes(t.mode)) theme.mode = t.mode;
+  // ordre et visibilité des sections
+  const secIn = Array.isArray(b.sections) ? b.sections : [];
+  const sections = uniq(secIn.map(x => x && x.id).filter(id => SECTIONS.includes(id)))
+    .map(id => ({ id, on: id === 'catalogue' ? true : secIn.find(x => x && x.id === id).on !== false }));
+  // textes : { fr: { h1: '…' }, en: { … } }
+  const texts = {};
+  if (b.texts && typeof b.texts === 'object') for (const l of LANGS) {
+    const src = b.texts[l]; if (!src || typeof src !== 'object') continue;
+    const o = {}; for (const k of TEXT_KEYS) if (typeof src[k] === 'string' && src[k].trim()) o[k] = src[k].trim().slice(0, 700);
+    if (Object.keys(o).length) texts[l] = o;
+  }
+  return {
+    gallery, cards, theme, sections, texts,
+    cardOrder: uniq((Array.isArray(b.cardOrder) ? b.cardOrder : []).filter(k => CARDS.includes(k))),
+    heroVideo: isUrl(b.heroVideo) ? b.heroVideo.trim() : '',
+    heroImage: isUrl(b.heroImage) ? b.heroImage.trim() : ''
+  };
 }
 const getHome = async () => { const d = await Setting.findOne({ key: 'home' }).lean(); return cleanHome((d && d.value) || {}); };
 
