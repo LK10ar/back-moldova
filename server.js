@@ -34,6 +34,7 @@ const base = {
   cover: url, gallery: [url],
   videos: [url], links: [{ label: String, url }],
   sub: String, w: String, reg: String, st: String, seeded: Boolean, when: i18n,
+  trace: Schema.Types.Mixed /* parcours : GeoJSON FeatureCollection (LineString + Points) */,
   location: { lat: Number, lng: Number }
 };
 const make = (name, extra = {}) =>
