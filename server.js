@@ -108,6 +108,13 @@ function cleanHome(b = {}) {
   if (FONT_H.includes(t.ff)) theme.ff = t.ff;
   if (FONT_B.includes(t.fb)) theme.fb = t.fb;
   if (['dark', 'light', 'auto'].includes(t.mode)) theme.mode = t.mode;
+  // image de fond (transparence, flou, luminosité, position, parallaxe)
+  const bi = b.bg && typeof b.bg === 'object' ? b.bg : {}, bg = {};
+  if (typeof bi.on === 'boolean') bg.on = bi.on;
+  if (isUrl(bi.url)) bg.url = bi.url.trim();
+  for (const [k, lo, hi] of [['opacity', 0, 100], ['blur', 0, 30], ['brightness', 20, 160]]) if (typeof bi[k] === 'number' && isFinite(bi[k])) bg[k] = Math.min(hi, Math.max(lo, bi[k]));
+  if (['center', 'top', 'bottom'].includes(bi.pos)) bg.pos = bi.pos;
+  if (typeof bi.parallax === 'boolean') bg.parallax = bi.parallax;
   // ordre et visibilité des sections
   const secIn = Array.isArray(b.sections) ? b.sections : [];
   const sections = uniq(secIn.map(x => x && x.id).filter(id => SECTIONS.includes(id)))
@@ -120,7 +127,7 @@ function cleanHome(b = {}) {
     if (Object.keys(o).length) texts[l] = o;
   }
   return {
-    gallery, cards, theme, sections, texts,
+    gallery, cards, theme, sections, texts, bg,
     cardOrder: uniq((Array.isArray(b.cardOrder) ? b.cardOrder : []).filter(k => CARDS.includes(k))),
     heroVideo: isUrl(b.heroVideo) ? b.heroVideo.trim() : '',
     heroImage: isUrl(b.heroImage) ? b.heroImage.trim() : ''
@@ -130,6 +137,16 @@ const getHome = async () => { const d = await Setting.findOne({ key: 'home' }).l
 
 /* ---------- API publique ---------- */
 const pub = express.Router();
+pub.get('/version', async (req, res) => {   // signature légère : le site la consulte pour se mettre à jour tout seul
+  try {
+    const parts = await Promise.all(Object.values(models).map(async M => {
+      const [n, last] = await Promise.all([M.countDocuments({ status: 'published' }), M.findOne({ status: 'published' }).sort('-updatedAt').select('updatedAt').lean()]);
+      return n + '.' + (last ? +last.updatedAt : 0);
+    }));
+    const st = await Setting.findOne({ key: 'home' }).select('updatedAt').lean();
+    res.set('Cache-Control', 'no-store'); res.json({ items: parts.join('|'), home: String(st ? +st.updatedAt : 0) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 pub.get('/settings/home', async (req, res) => { try { res.set('Cache-Control', 'public, max-age=30'); res.json(await getHome()); } catch (e) { res.status(500).json({ error: e.message }); } });
 pub.get('/:c', async (req, res) => {
   const M = models[req.params.c];
