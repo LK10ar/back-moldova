@@ -25,7 +25,7 @@ app.use(express.json({ limit: '200kb' }));
 app.get('/', (q, r) => r.send('Moldova Explorer API OK'));
 
 /* ---------- Schémas (images = URL String) ---------- */
-const i18n = { fr: String, en: String, es: String, ro: String, ru: String };
+const i18n = Schema.Types.Mixed;   // { fr, en, es, ro, ru, + toute langue ajoutée depuis l'admin }
 const url = { type: String, trim: true, match: /^https?:\/\//, default: undefined };
 const base = {
   slug: { type: String, unique: true, index: true, required: true },
@@ -80,16 +80,17 @@ const models = { circuits: Circuit, activities: Activity, restaurants: Restauran
    galerie « Un pays en images », cartes « Par où commencer », vidéo / photo du header,
    thème (couleurs + polices), ordre et visibilité des sections, textes modifiables. */
 const Setting = mongoose.model('Setting', new Schema({ key: { type: String, unique: true }, value: Schema.Types.Mixed }, { timestamps: true, minimize: false }));
-const LANGS = ['fr', 'en', 'es', 'ro', 'ru'];
+const LANGS = ['fr', 'en', 'es', 'ro', 'ru'];   // langues intégrées
+const LANG_RE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,4})?$/;
 const HEX = /^#[0-9a-f]{6}$/i;
 const FONT_H = ['Playfair Display', 'Cormorant Garamond', 'DM Serif Display', 'Fraunces', 'Lora', 'Montserrat', 'Poppins', 'Space Grotesk', 'Syne', 'Bebas Neue', 'Unbounded'];
 const FONT_B = ['Georgia', 'Inter', 'DM Sans', 'Manrope', 'Nunito', 'Lora', 'Poppins', 'Montserrat', 'system-ui'];
-const SECTIONS = ['intro', 'stack', 'gallery', 'globe', 'catalogue'];
+const SECTIONS = ['intro', 'stack', 'gallery', 'video', 'globe', 'catalogue'];
 const CARDS = ['c', 'g', 'h', 't'];
 const TEXT_KEYS = ['h1', 'sub', 'eye', 'c1', 'c2', 'st', 'kStack', 'tStack', 'kGal', 'tGal', 'kEarth', 'tEarth', 'dEarth', 'kCat', 'tCat', 'fH'];
 const isUrl = v => typeof v === 'string' && /^https?:\/\//i.test(v.trim());
 const uniq = a => [...new Set(a)];
-const i18nClean = (o, max) => { const r = {}; if (o && typeof o === 'object') for (const l of LANGS) if (typeof o[l] === 'string' && o[l].trim()) r[l] = o[l].trim().slice(0, max); return r; };
+const i18nClean = (o, max) => { const r = {}; if (o && typeof o === 'object') for (const l of Object.keys(o).slice(0, 40)) if (LANG_RE.test(l) && typeof o[l] === 'string' && o[l].trim()) r[l] = o[l].trim().slice(0, max); return r; };
 function cleanHome(b = {}) {
   const gallery = (Array.isArray(b.gallery) ? b.gallery : []).slice(0, 80)
     .filter(g => g && isUrl(g.url))
@@ -115,19 +116,38 @@ function cleanHome(b = {}) {
   for (const [k, lo, hi] of [['opacity', 0, 100], ['blur', 0, 30], ['brightness', 20, 160]]) if (typeof bi[k] === 'number' && isFinite(bi[k])) bg[k] = Math.min(hi, Math.max(lo, bi[k]));
   if (['center', 'top', 'bottom'].includes(bi.pos)) bg.pos = bi.pos;
   if (typeof bi.parallax === 'boolean') bg.parallax = bi.parallax;
+  // boutons de filtre ajoutés depuis l'admin (par rubrique)
+  const filters = {};
+  if (b.filters && typeof b.filters === 'object') for (const c of ['a', 'g', 'h', 't']) {
+    const out = [], seen = new Set();
+    for (const f of (Array.isArray(b.filters[c]) ? b.filters[c] : []).slice(0, 40)) {
+      const k = String((f && f.k) || '').toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
+      if (!k || seen.has(k)) continue; seen.add(k);
+      const l = i18nClean(f.l, 40); if (!Object.keys(l).length) l.fr = k;
+      out.push({ k, l });
+    }
+    if (out.length) filters[c] = out;
+  }
+  // vidéo YouTube de la page d'accueil
+  const vi = b.video && typeof b.video === 'object' ? b.video : {}, video = {};
+  if (typeof vi.on === 'boolean') video.on = vi.on;
+  if (typeof vi.url === 'string' && /^https:\/\/(www\.)?(youtu\.be|youtube\.com|youtube-nocookie\.com)\//i.test(vi.url.trim())) video.url = vi.url.trim();
+  const vt = i18nClean(vi.title, 160), vx = i18nClean(vi.text, 400);
+  if (Object.keys(vt).length) video.title = vt;
+  if (Object.keys(vx).length) video.text = vx;
   // ordre et visibilité des sections
   const secIn = Array.isArray(b.sections) ? b.sections : [];
   const sections = uniq(secIn.map(x => x && x.id).filter(id => SECTIONS.includes(id)))
     .map(id => ({ id, on: id === 'catalogue' ? true : secIn.find(x => x && x.id === id).on !== false }));
   // textes : { fr: { h1: '…' }, en: { … } }
   const texts = {};
-  if (b.texts && typeof b.texts === 'object') for (const l of LANGS) {
+  if (b.texts && typeof b.texts === 'object') for (const l of Object.keys(b.texts).slice(0, 40).filter(x => LANG_RE.test(x))) {
     const src = b.texts[l]; if (!src || typeof src !== 'object') continue;
     const o = {}; for (const k of TEXT_KEYS) if (typeof src[k] === 'string' && src[k].trim()) o[k] = src[k].trim().slice(0, 700);
     if (Object.keys(o).length) texts[l] = o;
   }
   return {
-    gallery, cards, theme, sections, texts, bg,
+    gallery, cards, theme, sections, texts, bg, video, filters,
     cardOrder: uniq((Array.isArray(b.cardOrder) ? b.cardOrder : []).filter(k => CARDS.includes(k))),
     heroVideo: isUrl(b.heroVideo) ? b.heroVideo.trim() : '',
     heroImage: isUrl(b.heroImage) ? b.heroImage.trim() : ''
@@ -144,10 +164,18 @@ pub.get('/version', async (req, res) => {   // signature légère : le site la c
       return n + '.' + (last ? +last.updatedAt : 0);
     }));
     const st = await Setting.findOne({ key: 'home' }).select('updatedAt').lean();
-    res.set('Cache-Control', 'no-store'); res.json({ items: parts.join('|'), home: String(st ? +st.updatedAt : 0) });
+    const ls = await Setting.find({ key: /^(langs|ui:)/ }).select('updatedAt').lean();
+    res.set('Cache-Control', 'no-store'); res.json({ items: parts.join('|'), home: String(st ? +st.updatedAt : 0), langs: ls.map(x => +x.updatedAt).join('.') });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 pub.get('/settings/home', async (req, res) => { try { res.set('Cache-Control', 'public, max-age=30'); res.json(await getHome()); } catch (e) { res.status(500).json({ error: e.message }); } });
+pub.get('/langs', async (req, res) => {
+  try {
+    const list = (await getLangs()).filter(l => l.on !== false), ui = {};
+    await Promise.all(list.map(async l => { ui[l.code] = await getUi(l.code); }));
+    res.set('Cache-Control', 'no-store'); res.json({ list: list.map(l => ({ code: l.code, name: l.name })), ui });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 pub.get('/:c', async (req, res) => {
   const M = models[req.params.c];
   if (!M) return res.sendStatus(404);
@@ -195,6 +223,89 @@ admin.post('/seed', async (q, r) => {
     r.json({ added });
   } catch (e) { r.status(500).json({ error: e.message }); }
 });
+
+/* ---------- Langues ajoutables + traduction automatique ---------- */
+const getLangs = async () => { const d = await Setting.findOne({ key: 'langs' }).lean(); return Array.isArray(d && d.value && d.value.list) ? d.value.list : []; };
+const getUi = async code => { const d = await Setting.findOne({ key: 'ui:' + code }).lean(); return (d && d.value) || {}; };
+class QuotaError extends Error {}
+const TR_CODE = { pt: 'PT-PT', en: 'EN-GB', zh: 'ZH' };
+const splitText = (t, n) => { const out = []; let cur = ''; for (const part of t.split(/(?<=[.!?…])\s+/)) { if ((cur + ' ' + part).trim().length > n && cur) { out.push(cur); cur = part; } else cur = (cur + ' ' + part).trim(); } if (cur) out.push(cur); return out.flatMap(x => x.length > n ? x.match(new RegExp('.{1,' + n + '}', 'gs')) : [x]); };
+const unent = t => String(t).replace(/&#(\d+);/g, (_, d) => String.fromCharCode(+d)).replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&#x27;|&apos;/g, "'");
+async function trClaude(strings, from, to, name) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', { method: 'POST', signal: AbortSignal.timeout(90000),
+    headers: { 'content-type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: process.env.TRANSLATE_MODEL || 'claude-haiku-4-5-20251001', max_tokens: 8000,
+      system: 'Tu es traducteur professionnel pour un site de tourisme sur la Moldavie. Traduis chaque élément du tableau JSON de la langue "' + from + '" vers "' + name + '" (code ' + to + '). Conserve les noms propres, les emojis, les chiffres et les balises. Réponds uniquement par un tableau JSON de chaînes, de même longueur et dans le même ordre, sans aucun commentaire.',
+      messages: [{ role: 'user', content: JSON.stringify(strings) }] }) });
+  const j = await r.json().catch(() => ({}));
+  const msg = (j.error && j.error.message) || '';
+  if (r.status === 429 || r.status === 529 || /credit|quota|billing|rate limit|usage limit/i.test(msg)) throw new QuotaError(msg || 'limite atteinte');
+  if (!r.ok) throw new Error(msg || 'Erreur Claude ' + r.status);
+  const t = (j.content || []).map(c => c.text || '').join('').trim().replace(/^```(?:json)?\s*|\s*```$/g, '');
+  const out = JSON.parse(t); if (!Array.isArray(out) || out.length !== strings.length) throw new Error('Réponse de traduction inattendue');
+  return out.map(String);
+}
+async function trDeepL(strings, from, to) {
+  const key = process.env.DEEPL_API_KEY, body = new URLSearchParams();
+  strings.forEach(s => body.append('text', s)); body.set('source_lang', from.toUpperCase()); body.set('target_lang', TR_CODE[to] || to.toUpperCase());
+  const r = await fetch((key.endsWith(':fx') ? 'https://api-free.deepl.com' : 'https://api.deepl.com') + '/v2/translate', { method: 'POST', headers: { Authorization: 'DeepL-Auth-Key ' + key }, body, signal: AbortSignal.timeout(40000) });
+  if (r.status === 456 || r.status === 429) throw new QuotaError('limite DeepL atteinte');
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.message || 'Erreur DeepL ' + r.status);
+  return j.translations.map(t => t.text);
+}
+async function trMyMemory(strings, from, to) {
+  const de = process.env.MYMEMORY_EMAIL ? '&de=' + encodeURIComponent(process.env.MYMEMORY_EMAIL) : '', out = [];
+  for (const s of strings) {
+    const tr = [];
+    for (const part of splitText(s, 450)) {
+      const r = await fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(part) + '&langpair=' + from + '|' + to + de, { signal: AbortSignal.timeout(25000) });
+      const j = await r.json().catch(() => ({})), det = String(j.responseDetails || '');
+      if (r.status === 429 || +j.responseStatus === 429 || /MYMEMORY WARNING|USED ALL AVAILABLE|QUOTA/i.test(det + JSON.stringify(j.responseData || ''))) throw new QuotaError('limite gratuite MyMemory atteinte');
+      if (j.responseStatus && +j.responseStatus !== 200) throw new Error(det || 'Erreur MyMemory');
+      tr.push(unent((j.responseData && j.responseData.translatedText) || part));
+    }
+    out.push(tr.join(' '));
+  }
+  return out;
+}
+const trProvider = () => process.env.ANTHROPIC_API_KEY ? 'claude' : process.env.DEEPL_API_KEY ? 'deepl' : 'mymemory';
+admin.get('/translate/info', (q, r) => { const p = trProvider(); r.json({ provider: p, batch: p === 'mymemory' ? 6 : p === 'claude' ? 25 : 40 }); });
+admin.post('/translate', async (q, r) => {
+  try {
+    const { to, name, strings } = q.body || {};
+    if (!LANG_RE.test(String(to || ''))) return r.status(400).json({ error: 'Code de langue invalide' });
+    if (!Array.isArray(strings) || !strings.length || strings.length > 40 || strings.some(s => typeof s !== 'string' || s.length > 6000)) return r.status(400).json({ error: 'Texte à traduire invalide' });
+    const p = trProvider(), nm = String(name || to).slice(0, 40);
+    const out = p === 'claude' ? await trClaude(strings, 'fr', to, nm) : p === 'deepl' ? await trDeepL(strings, 'fr', to) : await trMyMemory(strings, 'fr', to);
+    r.json({ out, provider: p });
+  } catch (e) {
+    if (e instanceof QuotaError) return r.status(429).json({ error: e.message, quota: true });
+    console.error('translate', e.message); r.status(500).json({ error: e.message });
+  }
+});
+admin.get('/langs', async (q, r) => { try { const list = await getLangs(), ui = {}; await Promise.all(list.map(async l => { ui[l.code] = await getUi(l.code); })); r.json({ list, ui }); } catch (e) { r.status(500).json({ error: e.message }); } });
+admin.put('/langs', async (q, r) => {
+  try {
+    const inList = Array.isArray(q.body && q.body.list) ? q.body.list.slice(0, 30) : [], seen = new Set(LANGS), list = [];
+    for (const l of inList) {
+      const code = String((l && l.code) || '').trim().toLowerCase(); if (!LANG_RE.test(code) || seen.has(code)) continue; seen.add(code);
+      list.push({ code, name: String(l.name || code).trim().slice(0, 40) || code, on: l.on !== false });
+    }
+    const old = await getLangs();
+    await Setting.findOneAndUpdate({ key: 'langs' }, { key: 'langs', value: { list } }, { upsert: true });
+    for (const o of old) if (!list.some(l => l.code === o.code)) await Setting.deleteOne({ key: 'ui:' + o.code });
+    r.json({ list });
+  } catch (e) { r.status(400).json({ error: e.message }); }
+});
+admin.put('/lang/ui/:code', async (q, r) => {
+  try {
+    const code = q.params.code; if (!(await getLangs()).some(l => l.code === code)) return r.status(404).json({ error: 'Langue inconnue : ajoute-la d\'abord' });
+    const cur = await getUi(code), map = q.body && q.body.map && typeof q.body.map === 'object' ? q.body.map : {};
+    for (const [k, v] of Object.entries(map).slice(0, 4000)) if (/^[A-Za-z0-9_.-]{1,80}$/.test(k) && typeof v === 'string' && v.length <= 3000) cur[k] = v;
+    await Setting.findOneAndUpdate({ key: 'ui:' + code }, { key: 'ui:' + code, value: cur }, { upsert: true });
+    r.json({ count: Object.keys(cur).length });
+  } catch (e) { r.status(400).json({ error: e.message }); }
+});
 admin.get('/settings/home', async (q, r) => { try { r.json(await getHome()); } catch (e) { r.status(500).json({ error: e.message }); } });
 admin.put('/settings/home', async (q, r) => {
   try {
@@ -204,6 +315,21 @@ admin.put('/settings/home', async (q, r) => {
   } catch (e) { r.status(400).json({ error: e.message }); }
 });
 admin.param('c', (q, r, next, c) => models[c] ? next() : r.sendStatus(404));
+admin.post('/:c/:id/move', async (q, r) => {
+  try {
+    const M = models[q.params.c], N = models[q.body.to];
+    if (!N) return r.status(400).json({ error: 'Rubrique inconnue' });
+    const patch = q.body.patch && typeof q.body.patch === 'object' ? q.body.patch : {};
+    if (N === M) return r.json(await M.findByIdAndUpdate(q.params.id, patch, { new: true }));
+    const d = await M.findById(q.params.id).lean(); if (!d) return r.sendStatus(404);
+    const { _id, __v, createdAt, updatedAt, ...rest } = d;
+    let doc;
+    try { doc = await N.create({ ...rest, ...patch }); }
+    catch (e) { if (e && e.code === 11000) return r.status(409).json({ error: 'Une fiche avec cet identifiant existe déjà dans la rubrique choisie : change son identifiant (slug) puis réessaie.' }); throw e; }
+    await M.findByIdAndDelete(q.params.id);
+    r.json(doc);
+  } catch (e) { r.status(400).json({ error: e.message }); }
+});
 admin.get('/:c', async (q, r) => r.json(await models[q.params.c].find().sort('-updatedAt').limit(200)));
 admin.post('/:c', async (q, r) => {
   try { r.status(201).json(await models[q.params.c].create(q.body)); }
